@@ -24,3 +24,40 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Animation utilities */
+.animate-in {
+  animation-duration: 0.3s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  animation-fill-mode: both;
+}
+
+.slide-in-from-bottom-5 {
+  animation-name: slideInFromBottom;
+}
+
+@keyframes slideInFromBottom {
+  from {
+    transform: translateY(1.25rem);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.slide-out-to-bottom {
+  animation-name: slideOutToBottom;
+}
+
+@keyframes slideOutToBottom {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(1.25rem);
+    opacity: 0;
+  }
+}

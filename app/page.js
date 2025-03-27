@@ -7,6 +7,7 @@ import { FolderCard } from './components/FolderCard';
 import { ImageCard } from './components/ImageCard';
 import { DropZone } from './components/DropZone';
 import { ImageGallery } from './components/ImageGallery';
+import { UploadProgress } from './components/UploadProgress';
 import { listFiles, uploadImage, deleteFile, getImageUrl } from './lib/supabase';
 import { DragIndicator } from './components/DragIndicator';
 
@@ -27,6 +28,12 @@ export default function Home() {
   const [galleryInitialIndex, setGalleryInitialIndex] = useState(0);
   const [galleryView, setGalleryView] = useState('grid'); // 'grid' or 'list'
   const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({
+    total: 0,
+    processed: 0,
+    uploading: false,
+    folders: new Set(),
+  });
   const mainRef = useRef(null);
 
   // Handle keyboard navigation
@@ -59,11 +66,119 @@ export default function Home() {
       }
     };
 
-    const handleDrop = (e) => {
+    const extractImagesFromFileList = async (fileList) => {
+      const validFiles = [];
+      
+      // Process each item in the file list
+      for (let i = 0; i < fileList.length; i++) {
+        const item = fileList[i];
+        
+        if (item.type.startsWith('image/')) {
+          // Direct image file
+          validFiles.push(item);
+        } else if (item.webkitGetAsEntry && item.webkitGetAsEntry()) {
+          // Check if it's a directory
+          const entry = item.webkitGetAsEntry();
+          if (entry.isDirectory) {
+            const dirFiles = await readDirectoryContents(entry);
+            validFiles.push(...dirFiles);
+          } else if (entry.isFile) {
+            // Process file entry
+            const file = await getFileFromEntry(entry);
+            if (file && file.type.startsWith('image/')) {
+              validFiles.push(file);
+            }
+          }
+        }
+      }
+      
+      return validFiles;
+    };
+    
+    const readDirectoryContents = (dirEntry) => {
+      return new Promise((resolve) => {
+        const dirReader = dirEntry.createReader();
+        const imageFiles = [];
+
+        // Recursive function to read all directory contents
+        const readEntries = () => {
+          dirReader.readEntries(async (entries) => {
+            if (entries.length === 0) {
+              resolve(imageFiles);
+              return;
+            }
+
+            for (const entry of entries) {
+              if (entry.isFile) {
+                // Get file
+                const file = await getFileFromEntry(entry);
+                if (file && file.type.startsWith('image/')) {
+                  // Only add image files
+                  imageFiles.push(file);
+                }
+              } else if (entry.isDirectory) {
+                // Process subdirectory
+                const subDirFiles = await readDirectoryContents(entry);
+                imageFiles.push(...subDirFiles);
+              }
+            }
+
+            // Continue reading (some browsers limit the entries returned in a single call)
+            readEntries();
+          });
+        };
+
+        readEntries();
+      });
+    };
+
+    const getFileFromEntry = (fileEntry) => {
+      return new Promise((resolve) => {
+        fileEntry.file(file => {
+          // Create a new File object with path information
+          const enhancedFile = new File(
+            [file], 
+            file.name, 
+            { type: file.type }
+          );
+          
+          // Add the relative path to help maintain folder structure
+          enhancedFile.relativePath = fileEntry.fullPath.substring(1); // Remove leading slash
+          
+          resolve(enhancedFile);
+        }, error => {
+          console.error('Error getting file:', error);
+          resolve(null);
+        });
+      });
+    };
+
+    const handleDrop = async (e) => {
       e.preventDefault();
       setIsDraggingOverPage(false);
       
-      if (!isUploadImageModalOpen && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      // If upload modal is open, let the modal handle the drop
+      if (isUploadImageModalOpen) return;
+      
+      if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+        // Use the items API which supports directories
+        try {
+          // Show loading state while processing folders
+          setIsLoading(true);
+          
+          const extractedImages = await extractImagesFromFileList(e.dataTransfer.items);
+          
+          if (extractedImages.length > 0) {
+            handleFilesUpload(extractedImages);
+          } else {
+            setIsLoading(false);
+          }
+        } catch (error) {
+          console.error('Error processing dropped items:', error);
+          setIsLoading(false);
+        }
+      } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        // Fallback for browsers not supporting DataTransferItemList
         const validFiles = Array.from(e.dataTransfer.files).filter(file => 
           file.type.startsWith('image/')
         );
@@ -199,30 +314,110 @@ export default function Home() {
   const handleFilesUpload = async (files) => {
     setIsLoading(true);
     let successCount = 0;
+    let errorCount = 0;
+    
+    // Initialize upload progress
+    setUploadProgress({
+      total: files.length,
+      processed: 0,
+      uploading: true,
+      folders: new Set(),
+    });
 
     try {
+      // Group files by directory to maintain folder structure
+      const filesByDirectory = {};
+      const detectedFolders = new Set();
+      
+      // Process each file and organize by directory
       for (const file of files) {
-        const filePath = currentPath 
-          ? `${currentPath}/${file.name}` 
-          : file.name;
+        // Check if the file has a relativePath property from a folder drop
+        let filePath;
+        if (file.relativePath) {
+          // If from folder drop, use the relative path
+          // Handle potential nested folders
+          const pathParts = file.relativePath.split('/');
+          
+          // If the file is in a subdirectory, create the folder structure
+          if (pathParts.length > 1) {
+            // Last part is the filename, so exclude it
+            const folderPath = pathParts.slice(0, -1).join('/');
+            
+            // Add to the current path with folder structure
+            filePath = currentPath 
+              ? `${currentPath}/${folderPath}/${file.name}`
+              : `${folderPath}/${file.name}`;
+              
+            // Track directories for UI updating
+            const directoryPath = currentPath 
+              ? `${currentPath}/${folderPath}`
+              : folderPath;
+              
+            // Add folder to tracking set
+            detectedFolders.add(directoryPath);
+              
+            if (!filesByDirectory[directoryPath]) {
+              filesByDirectory[directoryPath] = [];
+            }
+            filesByDirectory[directoryPath].push(file);
+          } else {
+            // File is directly in the dropped folder
+            filePath = currentPath 
+              ? `${currentPath}/${file.name}` 
+              : file.name;
+          }
+        } else {
+          // Regular file upload without folder structure
+          filePath = currentPath 
+            ? `${currentPath}/${file.name}` 
+            : file.name;
+        }
         
+        // Upload the file
         const { error } = await uploadImage(file, filePath);
+        
+        // Update progress
+        setUploadProgress(prev => ({
+          ...prev,
+          processed: prev.processed + 1,
+          folders: detectedFolders
+        }));
         
         if (!error) {
           successCount++;
         } else {
+          errorCount++;
           console.error(`Error uploading ${file.name}:`, error);
         }
       }
 
+      // Show results message
+      const totalFiles = files.length;
       if (successCount > 0) {
-        fetchFilesAndFolders();
-      } else {
-        setIsLoading(false);
+        // Success notification could be added here
+        console.log(`Successfully uploaded ${successCount} of ${totalFiles} files`);
       }
+      
+      if (errorCount > 0) {
+        // Error notification could be added here
+        console.error(`Failed to upload ${errorCount} of ${totalFiles} files`);
+      }
+
+      // Refresh file list
+      fetchFilesAndFolders();
     } catch (error) {
       console.error('Error uploading files:', error);
       setIsLoading(false);
+    } finally {
+      // Reset progress when done
+      setTimeout(() => {
+        setUploadProgress({
+          total: 0,
+          processed: 0,
+          uploading: false,
+          folders: new Set()
+        });
+      }, 1500);
     }
   };
 
@@ -715,13 +910,14 @@ export default function Home() {
               strokeLinecap="round" 
               strokeLinejoin="round"
             >
-              <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path>
-              <path d="M12 12v9"></path>
-              <path d="m16 16-4-4-4 4"></path>
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
             </svg>
-            <h3 className="text-xl font-medium mb-2">Drop images to upload</h3>
-            <p className="text-gray-500 dark:text-gray-400">
-              Drop your images here to upload them to {currentPath || 'Root'}
+            <h3 className="text-xl font-medium mb-2">Drop to upload</h3>
+            <p className="text-gray-500 dark:text-gray-400 mb-2">
+              Drop folders or images here to upload them to {currentPath || 'Root'}
+            </p>
+            <p className="text-xs text-blue-500">
+              Folder structure will be preserved
             </p>
           </div>
         </div>
@@ -729,6 +925,9 @@ export default function Home() {
 
       {/* Drag indicator */}
       <DragIndicator isVisible={isDraggingImage} />
+      
+      {/* Upload progress */}
+      <UploadProgress progress={uploadProgress} />
     </div>
   );
 }
