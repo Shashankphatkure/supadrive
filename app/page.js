@@ -601,6 +601,92 @@ export default function Home() {
     setIsRenameModalOpen(true);
   };
 
+  // Rewrite the recursive folder function to handle nested folders properly
+  const getFolderContentsRecursive = async (folderPath) => {
+    try {
+      // Get the direct contents of this folder
+      const { data, error } = await listFiles(folderPath);
+      
+      if (error) {
+        console.error('Error fetching folder contents:', error);
+        return { folders: [], files: [] };
+      }
+
+      // Process files in this folder (excluding .keep)
+      const filesList = await Promise.all(
+        data
+          .filter(item => item.id !== null && item.name !== '.keep')
+          .map(async (file) => {
+            const fullPath = folderPath ? `${folderPath}/${file.name}` : file.name;
+            const url = await getImageUrl(fullPath);
+            return {
+              ...file,
+              url,
+              path: fullPath
+            };
+          })
+      );
+
+      // Process folders
+      const foldersList = data
+        .filter(item => item.id === null)
+        .map(folder => ({
+          ...folder,
+          path: folderPath ? `${folderPath}/${folder.name}` : folder.name
+        }));
+
+      // Recursively process each subfolder
+      const processedFolders = await Promise.all(
+        foldersList.map(async (folder) => {
+          // Get contents of this subfolder
+          const subfolderContents = await getFolderContentsRecursive(folder.path);
+          
+          return {
+            name: folder.name,
+            path: folder.path,
+            files: subfolderContents.files,
+            folders: subfolderContents.folders,
+          };
+        })
+      );
+
+      return {
+        folders: processedFolders,
+        files: filesList
+      };
+    } catch (error) {
+      console.error('Error in recursive folder fetch:', error);
+      return { folders: [], files: [] };
+    }
+  };
+
+  // Update the JSON formatting utility to handle nested structure better
+  const formatNestedJson = (data) => {
+    if (!data) return null;
+    
+    const mapFiles = (files) => {
+      return files.map(file => ({
+        name: file.name,
+        path: file.path,
+        url: file.url,
+        size: file.metadata?.size,
+        type: file.metadata?.mimetype
+      }));
+    };
+    
+    // Create a cleaner representation of the data
+    return {
+      currentDirectory: currentPath || 'Root',
+      folders: data.folders.map(folder => ({
+        name: folder.name,
+        path: folder.path,
+        files: folder.files ? mapFiles(folder.files) : [],
+        folders: folder.folders || []
+      })),
+      files: mapFiles(data.files || [])
+    };
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <header className="bg-white dark:bg-gray-800 shadow">
@@ -1189,20 +1275,97 @@ export default function Home() {
               Close
             </Button>
             <Button 
-              onClick={() => {
-                const jsonString = JSON.stringify({ folders, images }, null, 2);
-                navigator.clipboard.writeText(jsonString);
+              onClick={async () => {
+                setIsLoading(true);
+                try {
+                  const fullData = await getFolderContentsRecursive(currentPath);
+                  const formattedData = formatNestedJson(fullData);
+                  const jsonString = JSON.stringify(formattedData, null, 2);
+                  navigator.clipboard.writeText(jsonString);
+                  alert("Complete folder structure copied to clipboard! Includes all files in nested folders.");
+                } catch (error) {
+                  console.error("Error generating JSON:", error);
+                } finally {
+                  setIsLoading(false);
+                }
               }}
             >
-              Copy JSON
+              Copy Complete JSON
+            </Button>
+            <Button
+              onClick={() => {
+                const simpleJson = JSON.stringify({ folders, images }, null, 2);
+                navigator.clipboard.writeText(simpleJson);
+                alert("Current view JSON copied to clipboard!");
+              }}
+            >
+              Copy Current View
             </Button>
           </div>
         }
       >
+        <div className="mb-4">
+          <p className="text-sm text-gray-500 mb-2">Choose an option:</p>
+          <div className="grid grid-cols-1 gap-2">
+            <Button
+              onClick={async () => {
+                setIsLoading(true);
+                try {
+                  const fullData = await getFolderContentsRecursive(currentPath);
+                  const formattedData = formatNestedJson(fullData);
+                  
+                  // Debug output
+                  console.log('Recursive folder data:', fullData);
+                  console.log('Formatted data:', formattedData);
+                  
+                  const jsonEl = document.getElementById('json-view');
+                  if (jsonEl) {
+                    jsonEl.textContent = JSON.stringify(formattedData, null, 2);
+                  }
+                } catch (error) {
+                  console.error("Error generating JSON:", error);
+                } finally {
+                  setIsLoading(false);
+                }
+              }}
+              className="w-full justify-start"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                <line x1="9" y1="10" x2="15" y2="10"></line>
+              </svg>
+              Load Complete Folder Structure with Files
+            </Button>
+            <Button
+              onClick={() => {
+                const jsonEl = document.getElementById('json-view');
+                if (jsonEl) {
+                  jsonEl.textContent = JSON.stringify({ folders, images }, null, 2);
+                }
+              }}
+              variant="outline"
+              className="w-full justify-start"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="3" y1="9" x2="21" y2="9"></line>
+                <line x1="9" y1="21" x2="9" y2="9"></line>
+              </svg>
+              Show Current View Only
+            </Button>
+          </div>
+        </div>
         <div className="overflow-auto max-h-96">
-          <pre className="text-xs p-4 bg-gray-100 dark:bg-gray-900 rounded-md overflow-auto">
-            {JSON.stringify({ folders, images }, null, 2)}
-          </pre>
+          {isLoading ? (
+            <div className="flex justify-center my-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+            </div>
+          ) : (
+            <pre id="json-view" className="text-xs p-4 bg-gray-100 dark:bg-gray-900 rounded-md overflow-auto">
+              {JSON.stringify({ folders, images }, null, 2)}
+            </pre>
+          )}
         </div>
       </Modal>
     </div>
