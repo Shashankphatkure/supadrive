@@ -2,7 +2,7 @@
 
 import { Button } from './Button';
 
-export function FolderCard({ name, onClick, onDelete }) {
+export function FolderCard({ name, onClick, onDelete, children }) {
   const handleDelete = (e) => {
     e.stopPropagation();
     onDelete();
@@ -38,31 +38,33 @@ export function FolderCard({ name, onClick, onDelete }) {
         >
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
         </svg>
-        <div className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all duration-300">
-          <Button 
-            variant="danger" 
-            size="sm"
-            onClick={handleDelete}
-            className="rounded-full shadow-md"
-            aria-label="Delete folder"
-            title="Delete folder"
-          >
-            <svg 
-              xmlns="http://www.w3.org/2000/svg" 
-              className="h-4 w-4" 
-              viewBox="0 0 24 24" 
-              fill="none" 
-              stroke="currentColor" 
-              strokeWidth="2" 
-              strokeLinecap="round" 
-              strokeLinejoin="round"
+        {children || (
+          <div className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all duration-300">
+            <Button 
+              variant="danger" 
+              size="sm"
+              onClick={handleDelete}
+              className="rounded-full shadow-md"
+              aria-label="Delete folder"
+              title="Delete folder"
             >
-              <path d="M3 6h18"></path>
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
-              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            </svg>
-          </Button>
-        </div>
+              <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                className="h-4 w-4" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2" 
+                strokeLinecap="round" 
+                strokeLinejoin="round"
+              >
+                <path d="M3 6h18"></path>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </Button>
+          </div>
+        )}
       </div>
       <p className="text-sm font-medium text-center truncate w-full">{name}</p>
     </div>
